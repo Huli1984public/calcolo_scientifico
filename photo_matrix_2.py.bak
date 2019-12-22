@@ -1,0 +1,148 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.axes3d import Axes3D as A3D
+from PIL import Image
+import glob
+import os
+import sys
+from collections import defaultdict
+
+
+def clamp(n, minn, maxn, mask):
+    maxn = np.stack((maxn, maxn), axis=2)
+    print(type(maxn), maxn.shape, n.shape)
+    if n[mask].any() < minn:
+        return minn
+    elif n[mask].any() > maxn[mask].any():
+        return maxn[mask]
+    else:
+        return n[mask]
+
+
+class ImageFilter:
+
+    def __init__(self, threshold=150, filter_force=50):
+        self.i_matrix = None
+
+        # set how much filter is applied
+        self.filter_force = filter_force
+        # set filter threshold
+        self.threshold = threshold
+
+    # concatena le immagini in un insieme di matrici di punti
+    # tutte le immagini in una matrice 3D
+    def open_image(self):
+        mat_a = None
+        file_list = glob.glob("img/*.tif")
+        for i in range(0, len(file_list)):
+            image = Image.open(file_list[i])
+
+            # call numpy to convert image in array of points
+            image_array = np.array(image)
+
+            # merge the arrays into one huger matrix
+            if i == 0:
+                mat_a = [image_array]
+            else:
+                mat_a = np.concatenate((mat_a, [image_array]))
+
+        try:
+            if mat_a.any():
+                self.i_matrix = mat_a
+            else:
+                raise IndexError
+        except AttributeError as e:
+            print(e)
+            mat_a = np.array(mat_a)
+            if mat_a.any():
+                self.i_matrix = mat_a
+            else:
+                raise IndexError
+
+
+if __name__ == "__main__":
+    id_fig = {}
+    my_filter = ImageFilter()
+    my_filter.open_image()
+
+    matrix = my_filter.i_matrix
+
+    # extracting first image
+    for i in range(len(matrix)):
+
+        # crea figura e salva id delle stesse
+        plt.figure(200)
+        id_fig[10 + i] = [f"image_{10+i}"]
+
+        # riconverte la matrice in immagine
+        plt.imshow(matrix[i, :, :, :])
+        plt.show()
+
+        # riduce verde e blu
+
+        reds = np.squeeze(matrix[i, :, :, :].copy())
+        reds[:, :, 1] = 0.0
+        reds[:, :, 2] = 0.0
+        red_mask = reds[:, :, 0] > my_filter.threshold
+
+        id_fig[10 + i].append({'reds': 1000 + i})
+        #plt.figure(1000+i)
+        #plt.imshow(reds)
+        #plt.show()
+        
+        greens = np.squeeze(matrix[i, :, :, :].copy())
+        greens[:, :, 0] = 0.0
+        greens[:, :, 2] = 0.0
+        green_mask = greens[:, :, 1] > my_filter.threshold
+
+        id_fig[10 + i].append({'greens': 1100 + i})
+        #plt.figure(1100+i)
+        #plt.imshow(greens)
+        #plt.show()
+
+        blues = np.squeeze(matrix[i, :, :, :].copy())
+        blues[:, :, 0] = 0.0
+        blues[:, :, 1] = 0.0
+        blues_mask = blues[:, :, 2] > my_filter.threshold
+
+        id_fig[10 + i].append({'blues': 1110 + i})
+        #plt.figure(1110+i)
+        #plt.imshow(blues)
+        #plt.show()
+
+        rebuilt = reds + greens + blues
+        plt.figure(10 + i)
+
+        rebuilt = rebuilt.astype(np.int16)
+        print(rebuilt, file=open("pre", "w"))
+        # esalta valore dominante sovra soglia
+        rebuilt[:, :, 1:3][(reds[:, :, 0] > my_filter.threshold) & (reds[:, :, 0] > blues[:, :, 2]) & (reds[:, :, 0] > greens[:, :, 1])] -= my_filter.filter_force
+        rebuilt[:, :, 0:2][(blues[:, :, 2] > my_filter.threshold) & (blues[:, :, 2] > reds[:, :, 0]) & (blues[:, :, 2] > greens[:, :, 1])] -= my_filter.filter_force
+        rebuilt[:, :, :1][(greens[:, :, 1] > my_filter.threshold) & (greens[:, :, 1] > reds[:, :, 0]) & (greens[:, :, 1] > blues[:, :, 2])] -= my_filter.filter_force
+        rebuilt[:, :, 2:][(greens[:, :, 1] > my_filter.threshold) & (greens[:, :, 1] > reds[:, :, 0]) & (greens[:, :, 1] > blues[:, :, 2])] -= my_filter.filter_force
+
+        # mitiga valore dominante sotto soglia
+        mask_1 = (reds[:, :, 0] < my_filter.threshold) & (reds[:, :, 0] < blues[:, :, 2]) & (reds[:, :, 0] < greens[:, :, 1])
+        rebuilt[:, :, 1:3][(reds[:, :, 0] < my_filter.threshold) & (reds[:, :, 0] < blues[:, :, 2]) & (reds[:, :, 0] < greens[:, :, 1])] = clamp((my_filter.filter_force + rebuilt[:, :, 1:3]), 0, rebuilt[:, :, 0], mask_1)
+        
+        mask_2 = (blues[:, :, 2] < my_filter.threshold) & (blues[:, :, 2] < reds[:, :, 0]) & (blues[:, :, 2] < greens[:, :, 1])
+        rebuilt[:, :, 0:2][(blues[:, :, 2] < my_filter.threshold) & (blues[:, :, 2] < reds[:, :, 0]) & (blues[:, :, 2] < greens[:, :, 1])] = clamp((my_filter.filter_force + rebuilt[:, :, 0:2]), 0, rebuilt[:, :, 2], mask_2)
+        
+        mask_3 = (greens[:, :, 1] < my_filter.threshold) & (greens[:, :, 1] < reds[:, :, 0]) & (greens[:, :, 1] < blues[:, :, 2])
+        rebuilt[:, :, 0][(greens[:, :, 1] < my_filter.threshold) & (greens[:, :, 1] < reds[:, :, 0]) & (greens[:, :, 1] < blues[:, :, 2])] = clamp((my_filter.filter_force + rebuilt[:, :, 0]), 0, rebuilt[:, :, 1], mask_3)
+        
+        mask_4 = (greens[:, :, 1] < my_filter.threshold) & (greens[:, :, 1] < reds[:, :, 0]) & (greens[:, :, 1] < blues[:, :, 2])
+        rebuilt[:, :, 2:][(greens[:, :, 1] < my_filter.threshold) & (greens[:, :, 1] < reds[:, :, 0]) & (greens[:, :, 1] < blues[:, :, 2])] = clamp((my_filter.filter_force + rebuilt[:, :, 2:]), 0, rebuilt[:, :, 1], mask_4)
+        print(rebuilt, file=open("after", "w"))
+
+        rebuilt[:, :, 0:3][rebuilt[:, :, 0:3] < 0] = 0.0
+        rebuilt[:, :, 0:3][rebuilt[:, :, 0:3] > 255] = 255.0
+        rebuilt = rebuilt.astype(np.uint8)
+
+        '''fare rebuilt[..] = funzione ceiling con ndarray((rebuilt trovato + effect), rebuild vecchio vedere funzioni gia' presenti in numpy
+        attenzione: deve essere val < threshold e > altro colore e > altro colore (ora e' errato'''
+
+        plt.imshow(rebuilt)
+        plt.show()
+
+
